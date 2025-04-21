@@ -16,7 +16,8 @@ load_dotenv()
 TOGETHER_API_KEY = os.getenv("TOGETHER_API_KEY")
 
 # Initialize PaddleOCR (CPU version)
-ocr_model = PaddleOCR(use_angle_cls=False, lang='en', use_gpu=False)
+ocr = PaddleOCR(use_angle_cls=False, lang='en')
+
 
 # Streamlit UI
 st.title("Boltware PDF Extractor 🔍")

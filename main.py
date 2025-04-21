@@ -18,7 +18,6 @@ TOGETHER_API_KEY = os.getenv("TOGETHER_API_KEY")
 # Initialize PaddleOCR (CPU version)
 ocr_model = PaddleOCR(use_angle_cls=False, lang='en', use_gpu=False)
 
-
 # Streamlit UI
 st.title("Boltware PDF Extractor 🔍")
 st.write("Upload a scanned PDF. PaddleOCR + Together AI (LLaMA 3.3 70B) will extract structured data from the first 2 pages.")
@@ -81,6 +80,11 @@ def paddle_ocr_text(image: Image.Image):
         full_text += text + "\n"
     return full_text
 
+# Check if page has extractable text
+def is_scanned_pdf(page):
+    text = page.get_text().strip()
+    return len(text) < 20  # Threshold to decide if it's likely scanned
+
 # Main logic
 if uploaded_file:
     with st.spinner("🔍 Processing PDF..."):
@@ -91,21 +95,23 @@ if uploaded_file:
         doc = fitz.open(tmp_pdf_path)
         max_pages = min(2, len(doc))  # Limit to first 2 pages
 
-        images = [
-            Image.frombytes(
-                "RGB",
-                [page.get_pixmap(dpi=150).width, page.get_pixmap(dpi=150).height],
-                page.get_pixmap(dpi=150).samples
-            )
-            for page in doc[:max_pages]
-        ]
-
         ocr_texts = []
-        for img in images:
-            try:
-                ocr_texts.append(paddle_ocr_text(img))
-            except Exception as e:
-                st.warning(f"OCR failed for one page: {e}")
+
+        for i in range(max_pages):
+            page = doc[i]
+            if is_scanned_pdf(page):
+                # Convert to image and OCR
+                pix = page.get_pixmap(dpi=150)
+                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                try:
+                    text = paddle_ocr_text(img)
+                    ocr_texts.append(text)
+                except Exception as e:
+                    st.warning(f"OCR failed for page {i+1}: {e}")
+            else:
+                # Direct text extraction
+                text = page.get_text()
+                ocr_texts.append(text)
 
         full_text = "\n".join(ocr_texts)
         max_len = 2000

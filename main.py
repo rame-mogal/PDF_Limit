@@ -13,28 +13,28 @@ import numpy as np
 
 # Load environment variables
 load_dotenv()
-TOGETHER_API_KEY=st.secrets['TOGETHER_API_KEY']
-TOGETHER_API_KEY = os.getenv("TOGETHER_API_KEY")
+OPENAI_API_KEY = st.secrets['OPENAI_API_KEY']
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # Initialize PaddleOCR (CPU version)
-ocr = PaddleOCR(use_angle_cls=False, lang='en')
-
+ocr_model = PaddleOCR(use_angle_cls=True, lang='en', use_gpu=False)
 
 # Streamlit UI
 st.title("Boltware PDF Extractor 🔍")
-st.write("Upload a scanned PDF. PaddleOCR + Together AI (LLaMA 3.3 70B) will extract structured data from the first 2 pages.")
+st.write("Upload a scanned PDF. PaddleOCR + GPT-3.5 Turbo will extract structured data from the first 2 pages.")
 
 uploaded_file = st.file_uploader("📄 Upload your scanned PDF", type=["pdf"])
 
-# Function to query Together AI
-def query_together(prompt):
-    url = "https://api.together.xyz/v1/chat/completions"
+# Function to query OpenAI GPT-3.5 Turbo
+def query_openai(prompt):
+    url = "https://api.openai.com/v1/chat/completions"
     headers = {
-        "Authorization": f"Bearer {TOGETHER_API_KEY}",
+        "Authorization": f"Bearer {OPENAI_API_KEY}",
         "Content-Type": "application/json"
     }
     body = {
-        "model": "meta-llama/Llama-3-70b-chat-hf",
+        "model": "gpt-3.5-turbo-1106",
+        "response_format": "json",
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.2,
         "max_tokens": 1024
@@ -45,10 +45,10 @@ def query_together(prompt):
         response.raise_for_status()
         return response.json()["choices"][0]["message"]["content"]
     except Exception as e:
-        st.error(f"Together AI API Error: {e}")
+        st.error(f"OpenAI API Error: {e}")
         return None
 
-# Build prompt for Together AI
+# Build prompt for OpenAI
 def build_prompt(text):
     return f"""
 Extract the following fields from the text:
@@ -82,11 +82,6 @@ def paddle_ocr_text(image: Image.Image):
         full_text += text + "\n"
     return full_text
 
-# Check if page has extractable text
-def is_scanned_pdf(page):
-    text = page.get_text().strip()
-    return len(text) < 20  # Threshold to decide if it's likely scanned
-
 # Main logic
 if uploaded_file:
     with st.spinner("🔍 Processing PDF..."):
@@ -97,23 +92,21 @@ if uploaded_file:
         doc = fitz.open(tmp_pdf_path)
         max_pages = min(2, len(doc))  # Limit to first 2 pages
 
-        ocr_texts = []
+        images = [
+            Image.frombytes(
+                "RGB",
+                [page.get_pixmap(dpi=150).width, page.get_pixmap(dpi=150).height],
+                page.get_pixmap(dpi=150).samples
+            )
+            for page in doc[:max_pages]
+        ]
 
-        for i in range(max_pages):
-            page = doc[i]
-            if is_scanned_pdf(page):
-                # Convert to image and OCR
-                pix = page.get_pixmap(dpi=150)
-                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-                try:
-                    text = paddle_ocr_text(img)
-                    ocr_texts.append(text)
-                except Exception as e:
-                    st.warning(f"OCR failed for page {i+1}: {e}")
-            else:
-                # Direct text extraction
-                text = page.get_text()
-                ocr_texts.append(text)
+        ocr_texts = []
+        for img in images:
+            try:
+                ocr_texts.append(paddle_ocr_text(img))
+            except Exception as e:
+                st.warning(f"OCR failed for one page: {e}")
 
         full_text = "\n".join(ocr_texts)
         max_len = 2000
@@ -123,15 +116,13 @@ if uploaded_file:
 
         for chunk in chunks[:1]:  # Only process the first chunk
             prompt = build_prompt(chunk)
-            response = query_together(prompt)
+            response = query_openai(prompt)
             if response:
-                match = re.search(r'\{.*\}', response, re.DOTALL)
-                if match:
-                    try:
-                        data = json.loads(match.group(0))
-                        all_results.append(data)
-                    except json.JSONDecodeError:
-                        st.warning("⚠️ Invalid JSON in response.")
+                try:
+                    data = json.loads(response)
+                    all_results.append(data)
+                except json.JSONDecodeError:
+                    st.warning("⚠️ Invalid JSON in response.")
 
         # Merge results
         final_result = {}

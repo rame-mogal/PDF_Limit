@@ -7,37 +7,46 @@ import pandas as pd
 import streamlit as st
 from PIL import Image
 from dotenv import load_dotenv
-import openai
+import requests
 from paddleocr import PaddleOCR
 import numpy as np
 
 # Load environment variables
 load_dotenv()
-openai.api_key = os.getenv("OPENAI_API_KEY")
+TOGETHER_API_KEY = os.getenv("TOGETHER_API_KEY")
 
 # Initialize PaddleOCR (CPU version)
 ocr_model = PaddleOCR(use_angle_cls=True, lang='en', use_gpu=False)
 
 # Streamlit UI
 st.title("Boltware PDF Extractor 🔍")
-st.write("Upload a scanned PDF. PaddleOCR + GPT-3.5 Turbo will extract structured data from the first 2 pages.")
+st.write("Upload a scanned PDF. PaddleOCR + Together AI (LLaMA 3.3 70B) will extract structured data from the first 2 pages.")
 
 uploaded_file = st.file_uploader("📄 Upload your scanned PDF", type=["pdf"])
 
-# Function to query OpenAI
-def query_openai(prompt):
+# Function to query Together AI
+def query_together(prompt):
+    url = "https://api.together.xyz/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {TOGETHER_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    body = {
+        "model": "meta-llama/Llama-3-70b-chat-hf",
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.2,
+        "max_tokens": 1024
+    }
+
     try:
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo-1106",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.2,
-        )
-        return response['choices'][0]['message']['content']
+        response = requests.post(url, headers=headers, json=body)
+        response.raise_for_status()
+        return response.json()["choices"][0]["message"]["content"]
     except Exception as e:
-        st.error(f"OpenAI API Error: {e}")
+        st.error(f"Together AI API Error: {e}")
         return None
 
-# Build prompt for GPT
+# Build prompt for Together AI
 def build_prompt(text):
     return f"""
 Extract the following fields from the text:
@@ -105,7 +114,7 @@ if uploaded_file:
 
         for chunk in chunks[:1]:  # Only process the first chunk
             prompt = build_prompt(chunk)
-            response = query_openai(prompt)
+            response = query_together(prompt)
             if response:
                 match = re.search(r'\{.*\}', response, re.DOTALL)
                 if match:

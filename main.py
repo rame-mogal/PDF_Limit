@@ -6,20 +6,22 @@ import tempfile
 import pandas as pd
 import streamlit as st
 from PIL import Image
-import pytesseract
 from dotenv import load_dotenv
 import openai
+import numpy as np
 
-# 🔧 Set path to Tesseract executable (IMPORTANT!)
-pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR"
+from paddleocr import PaddleOCR
 
 # ✅ Load environment variables
 load_dotenv()
-openai.api_key = st.secrets["OPENAI_API_KEY"]
+openai.api_key = os.getenv("OPENAI_API_KEY")
+
+# ✅ Initialize PaddleOCR (only once)
+ocr_model = PaddleOCR(use_angle_cls=True, lang='en', use_gpu=False)
 
 # 🚀 Streamlit UI
 st.title("Boltware PDF Extractor 🔍")
-st.write("Upload a PDF. Tesseract OCR will run only if the PDF is scanned (image-based).")
+st.write("Upload a PDF. PaddleOCR will run only if the PDF is scanned (image-based).")
 
 uploaded_file = st.file_uploader("📄 Upload your PDF", type=["pdf"])
 
@@ -61,10 +63,13 @@ Respond ONLY in this JSON format:
 }}
 """
 
-# 🧠 Tesseract OCR function
-def tesseract_ocr_text(image: Image.Image) -> str:
+# 🧠 PaddleOCR function
+def paddleocr_text(image: Image.Image) -> str:
     try:
-        return pytesseract.image_to_string(image)
+        image_np = np.array(image)
+        result = ocr_model.ocr(image_np, cls=True)
+        extracted_text = "\n".join([line[1][0] for line in result[0]])
+        return extracted_text
     except Exception as e:
         raise RuntimeError(f"OCR Error: {e}")
 
@@ -96,7 +101,7 @@ if uploaded_file:
                 try:
                     pix = page.get_pixmap(dpi=200)
                     img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-                    ocr_text = tesseract_ocr_text(img)
+                    ocr_text = paddleocr_text(img)
                     full_text += ocr_text + "\n"
                 except Exception as e:
                     st.warning(f"OCR failed on page {i+1}: {e}")

@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 import openai
 
 # 🔧 Set path to Tesseract executable (IMPORTANT!)
-pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR"
 
 # ✅ Load environment variables
 load_dotenv()

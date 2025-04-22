@@ -7,48 +7,37 @@ import pandas as pd
 import streamlit as st
 from PIL import Image
 from dotenv import load_dotenv
-import requests
-from paddleocr import PaddleOCR
+import openai
 import numpy as np
+from paddleocr import PaddleOCR
 
 # Load environment variables
 load_dotenv()
-OPENAI_API_KEY = st.secrets['OPENAI_API_KEY']
-
-
+openai.api_key = st.secrets["OPENAI_API_KEY"]
 # Initialize PaddleOCR (CPU version)
 ocr_model = PaddleOCR(use_angle_cls=True, lang='en', use_gpu=False)
 
 # Streamlit UI
 st.title("Boltware PDF Extractor 🔍")
-st.write("Upload a scanned PDF. PaddleOCR + GPT-3.5 Turbo will extract structured data from the first 2 pages.")
+st.write("Upload a scanned PDF. PaddleOCR + OpenAI GPT-3.5 Turbo will extract structured data from the first 2 pages.")
 
 uploaded_file = st.file_uploader("📄 Upload your scanned PDF", type=["pdf"])
 
-# Function to query OpenAI GPT-3.5 Turbo
-def query_openai(prompt):
-    url = "https://api.openai.com/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {OPENAI_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    body = {
-        "model": "gpt-3.5-turbo-1106",
-        "response_format": "json",
-        "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.2,
-        "max_tokens": 1024
-    }
-
+# Query OpenAI API
+def query_openai_json(prompt):
     try:
-        response = requests.post(url, headers=headers, json=body)
-        response.raise_for_status()
-        return response.json()["choices"][0]["message"]["content"]
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo-1106",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+            max_tokens=1024
+        )
+        return response.choices[0].message.content
     except Exception as e:
         st.error(f"OpenAI API Error: {e}")
         return None
 
-# Build prompt for OpenAI
+# Build prompt for GPT
 def build_prompt(text):
     return f"""
 Extract the following fields from the text:
@@ -72,7 +61,7 @@ Respond ONLY in this JSON format:
 }}
 """
 
-# OCR using PaddleOCR
+# OCR function using PaddleOCR
 def paddle_ocr_text(image: Image.Image):
     img_array = image.convert("RGB")
     results = ocr_model.ocr(np.array(img_array), cls=True)
@@ -114,17 +103,19 @@ if uploaded_file:
 
         all_results = []
 
-        for chunk in chunks[:1]:  # Only process the first chunk
+        for chunk in chunks[:1]:  # Process only the first chunk for now
             prompt = build_prompt(chunk)
-            response = query_openai(prompt)
+            response = query_openai_json(prompt)
             if response:
-                try:
-                    data = json.loads(response)
-                    all_results.append(data)
-                except json.JSONDecodeError:
-                    st.warning("⚠️ Invalid JSON in response.")
+                match = re.search(r'\{.*\}', response, re.DOTALL)
+                if match:
+                    try:
+                        data = json.loads(match.group(0))
+                        all_results.append(data)
+                    except json.JSONDecodeError:
+                        st.warning("⚠️ Invalid JSON in response.")
 
-        # Merge results
+        # Merge all extracted results
         final_result = {}
         for result in all_results:
             for key, value in result.items():
@@ -135,6 +126,7 @@ if uploaded_file:
             df = pd.DataFrame([final_result])
             st.subheader("✅ Extracted Information")
             st.dataframe(df)
+
             st.download_button("⬇️ Download as JSON", json.dumps(final_result, indent=2), file_name="extracted_info.json")
             st.download_button("⬇️ Download as CSV", df.to_csv(index=False), file_name="extracted_info.csv")
         else:

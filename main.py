@@ -6,22 +6,19 @@ import tempfile
 import pandas as pd
 import streamlit as st
 from PIL import Image
+import pytesseract
 from dotenv import load_dotenv
 import openai
-import numpy as np
-from paddleocr import PaddleOCR
 
 # Load environment variables
 load_dotenv()
 openai.api_key = st.secrets["OPENAI_API_KEY"]
-# Initialize PaddleOCR (CPU version)
-ocr_model = PaddleOCR(use_angle_cls=True, lang='en', use_gpu=False)
 
-# Streamlit UI
+#Streamlit UI
 st.title("Boltware PDF Extractor 🔍")
-st.write("Upload a scanned PDF. PaddleOCR + OpenAI GPT-3.5 Turbo will extract structured data from the first 2 pages.")
+st.write("Upload a PDF. Tesseract OCR will run only if the PDF is scanned (image-based).")
 
-uploaded_file = st.file_uploader("📄 Upload your scanned PDF", type=["pdf"])
+uploaded_file = st.file_uploader("📄 Upload your PDF", type=["pdf"])
 
 # Query OpenAI API
 def query_openai_json(prompt):
@@ -37,7 +34,7 @@ def query_openai_json(prompt):
         st.error(f"OpenAI API Error: {e}")
         return None
 
-# Build prompt for GPT
+# GPT Prompt Builder
 def build_prompt(text):
     return f"""
 Extract the following fields from the text:
@@ -61,15 +58,14 @@ Respond ONLY in this JSON format:
 }}
 """
 
-# OCR function using PaddleOCR
-def paddle_ocr_text(image: Image.Image):
-    img_array = image.convert("RGB")
-    results = ocr_model.ocr(np.array(img_array), cls=True)
-    full_text = ""
-    for line in results[0]:
-        text = line[1][0]
-        full_text += text + "\n"
-    return full_text
+# Tesseract OCR function
+def tesseract_ocr_text(image: Image.Image) -> str:
+    return pytesseract.image_to_string(image)
+
+# Detect if a page is image-based (scanned)
+def is_scanned_page(page):
+    text = page.get_text().strip()
+    return len(text) < 20  # Consider scanned if minimal embedded text
 
 # Main logic
 if uploaded_file:
@@ -79,31 +75,30 @@ if uploaded_file:
             tmp_pdf_path = tmp_file.name
 
         doc = fitz.open(tmp_pdf_path)
-        max_pages = min(2, len(doc))  # Limit to first 2 pages
+        max_pages = min(2, len(doc))
 
-        images = [
-            Image.frombytes(
-                "RGB",
-                [page.get_pixmap(dpi=150).width, page.get_pixmap(dpi=150).height],
-                page.get_pixmap(dpi=150).samples
-            )
-            for page in doc[:max_pages]
-        ]
+        full_text = ""
 
-        ocr_texts = []
-        for img in images:
-            try:
-                ocr_texts.append(paddle_ocr_text(img))
-            except Exception as e:
-                st.warning(f"OCR failed for one page: {e}")
+        for i in range(max_pages):
+            page = doc[i]
+            if is_scanned_page(page):
+                pix = page.get_pixmap(dpi=200)
+                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                try:
+                    ocr_text = tesseract_ocr_text(img)
+                    full_text += ocr_text + "\n"
+                except Exception as e:
+                    st.warning(f"OCR failed on page {i+1}: {e}")
+            else:
+                full_text += page.get_text() + "\n"
 
-        full_text = "\n".join(ocr_texts)
+        # Chunk & process with GPT
         max_len = 2000
         chunks = [full_text[i:i + max_len] for i in range(0, len(full_text), max_len)]
 
         all_results = []
 
-        for chunk in chunks[:1]:  # Process only the first chunk for now
+        for chunk in chunks[:1]:  # Only first chunk for now
             prompt = build_prompt(chunk)
             response = query_openai_json(prompt)
             if response:
@@ -113,9 +108,9 @@ if uploaded_file:
                         data = json.loads(match.group(0))
                         all_results.append(data)
                     except json.JSONDecodeError:
-                        st.warning("⚠️ Invalid JSON in response.")
+                        st.warning("⚠️ Invalid JSON format from OpenAI.")
 
-        # Merge all extracted results
+        # Merge results
         final_result = {}
         for result in all_results:
             for key, value in result.items():

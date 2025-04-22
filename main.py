@@ -91,7 +91,7 @@ if uploaded_file:
             st.error(f"Failed to read PDF: {e}")
             st.stop()
 
-        max_pages = min(2, len(doc))  # Limit to first 2 pages for speed
+        max_pages = min(1, len(doc))  # Limit to first 1 pages for speed
         full_text = ""
 
         for i in range(max_pages):
